@@ -880,17 +880,19 @@ export default function App() {
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", vis); };
   }, [uid]);
 
-  // Dos accesos independientes: "/" para huéspedes y "/#admin" para el personal.
-  const blocked = !!me && (me.role !== "guest") !== isAdmin;
+  // Dos accesos: "/" para huéspedes y "/#admin" para el personal. Si alguien entra por el que no
+  // le corresponde, se corrige la dirección (no se cierra la sesión).
+  const wrongRoute = !!me && (me.role !== "guest") !== isAdmin;
   useEffect(() => {
-    if (!blocked) return;
-    setNotice(isAdmin ? "Esta área es solo para el personal del hotel." : "El personal debe ingresar desde la dirección de administración.");
-    supabase.auth.signOut();
-  }, [blocked]); // eslint-disable-line
+    if (!wrongRoute) return;
+    const staff = me.role !== "guest";
+    window.history.replaceState(null, "", window.location.pathname + window.location.search + (staff ? "#admin" : ""));
+    setIsAdmin(staff);
+  }, [wrongRoute]); // eslint-disable-line
 
   let body;
   if (session === undefined || (uid && me === undefined)) body = <div className="login"><p className="kicker" style={{ color: "#e7d3a8" }}>Cargando…</p></div>;
-  else if (!uid || !me || blocked) body = <Login notice={notice} admin={isAdmin} />;
+  else if (!uid || !me) body = <Login notice={notice} admin={isAdmin} />;
   else body = (
     <div className="shell">
       {!online && <div className="banner">Sin conexión · algunas funciones no están disponibles</div>}

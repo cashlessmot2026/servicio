@@ -25,6 +25,8 @@ const KINDS = { deporte: "Deporte", bienestar: "Bienestar", salon: "Salón", otr
 
 /* -------------------------------- Utilidades ------------------------------ */
 
+const isAdminHash = () => ["#admin", "#/admin"].includes(window.location.hash.toLowerCase());
+
 const toEmail = (u) => `${u.trim().toLowerCase()}@hotel.local`;
 const money = (n) => new Intl.NumberFormat("es", { style: "currency", currency: "USD" }).format(n || 0);
 const fmtDT = (d) => new Date(d).toLocaleString("es", { dateStyle: "medium", timeStyle: "short" });
@@ -182,11 +184,12 @@ function Tabs({ items, active, onSelect }) {
 
 /* ----------------------------------- Login --------------------------------- */
 
-function Login({ notice }) {
-  const [u, setU] = useState("");
+function Login({ notice, admin }) {
+  const [u, setU] = useState(admin ? "recepcion" : "");
   const [p, setP] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(notice || "");
+  useEffect(() => { setErr(notice || ""); }, [notice]);
 
   async function submit(e) {
     e.preventDefault();
@@ -199,12 +202,12 @@ function Login({ notice }) {
   return (
     <div className="login">
       <form className="card grid" onSubmit={submit}>
-        <div><p className="kicker" style={{ textAlign: "center" }}>Bienvenido</p><h1>CONCIERGE</h1><div className="rule" /></div>
+        <div><p className="kicker" style={{ textAlign: "center" }}>{admin ? "Administración" : "Bienvenido"}</p><h1>CONCIERGE</h1><div className="rule" /></div>
         <Field label="Usuario"><input value={u} onChange={(e) => setU(e.target.value)} autoCapitalize="none" autoComplete="username" required /></Field>
         <Field label="Contraseña"><input type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" required /></Field>
         {err && <p className="err" role="alert">{err}</p>}
         <button className="btn gold" disabled={busy}>{busy ? "Ingresando…" : "Ingresar"}</button>
-        <p className="muted sm" style={{ textAlign: "center" }}>Su usuario y contraseña le fueron entregados en recepción al registrarse.</p>
+        <p className="muted sm" style={{ textAlign: "center" }}>{admin ? "Acceso exclusivo para el personal del hotel." : "Su usuario y contraseña le fueron entregados en recepción al registrarse."}</p>
       </form>
     </div>
   );
@@ -838,6 +841,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [installEvt, setInstallEvt] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(isAdminHash());
 
   const notify = useCallback((msg, err = false) => { setToast({ msg, err }); setTimeout(() => setToast(null), 3800); }, []);
 
@@ -846,8 +850,10 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     const on = () => setOnline(true), off = () => setOnline(false);
     const bip = (e) => { e.preventDefault(); setInstallEvt(e); };
+    const hc = () => setIsAdmin(isAdminHash());
+    window.addEventListener("hashchange", hc);
     window.addEventListener("online", on); window.addEventListener("offline", off); window.addEventListener("beforeinstallprompt", bip);
-    return () => { sub.subscription.unsubscribe(); window.removeEventListener("online", on); window.removeEventListener("offline", off); window.removeEventListener("beforeinstallprompt", bip); };
+    return () => { sub.subscription.unsubscribe(); window.removeEventListener("online", on); window.removeEventListener("offline", off); window.removeEventListener("beforeinstallprompt", bip); window.removeEventListener("hashchange", hc); };
   }, []);
 
   const uid = session?.user?.id;
@@ -874,14 +880,22 @@ export default function App() {
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", vis); };
   }, [uid]);
 
+  // Dos accesos independientes: "/" para huéspedes y "/#admin" para el personal.
+  const blocked = !!me && (me.role !== "guest") !== isAdmin;
+  useEffect(() => {
+    if (!blocked) return;
+    setNotice(isAdmin ? "Esta área es solo para el personal del hotel." : "El personal debe ingresar desde la dirección de administración.");
+    supabase.auth.signOut();
+  }, [blocked]); // eslint-disable-line
+
   let body;
   if (session === undefined || (uid && me === undefined)) body = <div className="login"><p className="kicker" style={{ color: "#e7d3a8" }}>Cargando…</p></div>;
-  else if (!uid || !me) body = <Login notice={notice} />;
+  else if (!uid || !me || blocked) body = <Login notice={notice} admin={isAdmin} />;
   else body = (
     <div className="shell">
       {!online && <div className="banner">Sin conexión · algunas funciones no están disponibles</div>}
       <header className="top">
-        <span className="brand">CONCIERGE</span>
+        <span className="brand">{me.role === "guest" ? "CONCIERGE" : "CONCIERGE · ADMIN"}</span>
         {installEvt && <button className="btn sm gold" onClick={() => { installEvt.prompt(); setInstallEvt(null); }}>Instalar app</button>}
         <div className="who"><b>{me.full_name}</b>{ROLE_LABEL[me.role]}{me.room ? ` · Hab. ${me.room}` : ""}</div>
         <button className="btn sm ghost" style={{ color: "#f3ece0", borderColor: "#ffffff55" }} onClick={() => { setNotice(""); setMe(undefined); supabase.auth.signOut(); }} aria-label="Cerrar sesión"><Icon n="logout" /></button>

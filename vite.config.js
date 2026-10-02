@@ -57,4 +57,5 @@ const pwaIcons = () => ({
   },
 });
 
-export default defineConfig({ plugins: [react(), pwaIcons()] });
+// La app se publica en https://<usuario>.github.io/servicio/
+export default defineConfig({ base: "/servicio/", plugins: [react(), pwaIcons()] });

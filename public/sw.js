@@ -1,7 +1,8 @@
 // Service worker: permite instalar la app y abrirla sin conexión.
 // Las llamadas a Supabase (otro origen) nunca se guardan en caché.
-const CACHE = "concierge-v1";
-const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "concierge-v2";
+const ROOT = self.registration.scope; // funciona en cualquier subcarpeta
+const SHELL = [ROOT, ROOT + "manifest.webmanifest", ROOT + "icon.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
@@ -22,7 +23,7 @@ self.addEventListener("fetch", (e) => {
   if (req.method !== "GET" || url.origin !== self.location.origin) return;
 
   if (req.mode === "navigate") {
-    e.respondWith(fetch(req).catch(() => caches.match("/")));
+    e.respondWith(fetch(req).catch(() => caches.match(ROOT)));
     return;
   }
   e.respondWith(

@@ -426,6 +426,10 @@ drop policy if exists settings_write on public.hotel_settings;
 create policy settings_write on public.hotel_settings for all to authenticated
   using (public.is_reception()) with check (public.is_reception());
 
+-- 6c. LIQUIDACIÓN: tarifa por noche e impuesto
+alter table public.profiles add column if not exists rate_per_night numeric(10,2);
+alter table public.hotel_settings add column if not exists tax_percent numeric(5,2) not null default 0;
+
 -- ---------------------------------------------------------------------------
 -- 7. PRIMER USUARIO DE RECEPCIÓN  (ejecutar desde el SQL Editor)
 --    Cambia usuario y contraseña ANTES de ejecutar esta línea:

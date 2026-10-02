@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Hotel Concierge</title>
+    <meta name="description" content="Servicios del hotel al alcance del huésped: recepción, habitación, restaurante y reservas." />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f2742" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Concierge" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
+    <!-- Tipografía -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root { --bg: #faf7f2; --ink: #0f2742; --gold: #b08d4f; }
+      @media (prefers-color-scheme: dark) { :root { --bg: #0b1626; --ink: #f3ece0; } }
+      html, body, #root { height: 100%; margin: 0; }
+      body { background: var(--bg); color: var(--ink); font-family: "Inter", system-ui, sans-serif; }
+      .splash { height: 100%; display: grid; place-items: center; font-family: "Cormorant Garamond", serif; font-size: 1.6rem; letter-spacing: .12em; color: var(--gold); }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="splash">HOTEL CONCIERGE</div></div>
+    <noscript>Esta aplicación requiere JavaScript.</noscript>
+
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+      }
+    </script>
+  </body>
+</html>

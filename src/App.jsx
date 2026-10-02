@@ -75,6 +75,14 @@ function useData(loader, deps = [], live = []) {
   return { ...st, reload: load };
 }
 
+function useSettings() {
+  const { data, reload } = useData(async () => {
+    const { data: row, error } = await supabase.from("hotel_settings").select("*").eq("id", 1).maybeSingle();
+    return error ? {} : row || {};
+  }, [], ["hotel_settings"]);
+  return { settings: data || {}, reload };
+}
+
 const Notify = createContext(() => {});
 const useNotify = () => useContext(Notify);
 
@@ -138,6 +146,18 @@ svg.i{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke
 .empty{text-align:center;color:var(--muted);padding:28px 10px;font-size:.92rem}.err{color:var(--bad);font-size:.88rem}
 table{width:100%;border-collapse:collapse;font-size:.9rem}th{text-align:left;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:8px}td{padding:11px 8px;border-top:1px solid var(--line);vertical-align:middle}
 .scroll{overflow-x:auto}
+.pc{background:#fff;color:#14243b;border:1px solid #e4dccd;border-radius:14px;padding:30px 28px;max-width:560px;box-shadow:var(--shadow)}
+.pc-k{font-size:.7rem;letter-spacing:.18em;text-transform:uppercase;color:#8f6f38;font-weight:600;margin:0}
+.pc-h{font-family:"Cormorant Garamond",serif;font-size:1.9rem;letter-spacing:.12em;text-transform:uppercase;margin:6px 0 0;color:#14243b}
+.pc-rule{height:2px;width:56px;background:#b08d4f;margin:12px 0 18px}
+.pc-name{font-family:"Cormorant Garamond",serif;font-size:1.5rem;font-weight:600}
+.pc-s{font-size:.8rem;color:#6b7788;margin-top:8px}
+.pc-v{font-size:1.05rem;font-weight:600;letter-spacing:.03em;word-break:break-all}
+.pc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px}
+.pc-box{border:1px solid #e4dccd;border-radius:10px;padding:14px 16px;background:#faf7f2}
+.pc-foot{margin-top:20px;font-size:.78rem;color:#6b7788;border-top:1px solid #e4dccd;padding-top:12px}
+@media print{@page{margin:18mm}body *{visibility:hidden!important}.print-card,.print-card *{visibility:visible!important}
+.print-card{position:absolute;left:0;top:0;width:100%;max-width:none;border:0;box-shadow:none}.noprint{display:none!important}}
 `;
 
 /* -------------------------------- Componentes UI --------------------------- */
@@ -505,6 +525,7 @@ function Activity({ me }) {
 function GuestHome({ me, open, go }) {
   const { data: ress } = useData(() => q(supabase.from("reservations").select("*, spaces(name)").eq("guest_id", me.id).eq("status", "confirmada")), [me.id], ["reservations"]);
   const { data: ords } = useData(() => q(supabase.from("orders").select("id,status").eq("guest_id", me.id).in("status", ["pendiente", "en_curso"])), [me.id], ["orders"]);
+  const { settings } = useSettings();
   const next = (ress || []).map((r) => ({ r, s: parseRange(r.during)[0] })).filter((x) => x.s > new Date()).sort((a, b) => a.s - b.s)[0];
   return (
     <div>
@@ -519,6 +540,9 @@ function GuestHome({ me, open, go }) {
           <p className="mt2" style={{ fontSize: "2rem", fontFamily: "Cormorant Garamond,serif" }}>{ords?.length ?? "—"}</p>
           <button className="btn ghost sm mt2" onClick={() => go("activity")}>Ver actividad</button></div>
       </div>
+      {settings.wifi_name && (
+        <div className="card mt"><p className="kicker">Wi‑Fi del hotel</p>
+          <p className="mt2"><b>{settings.wifi_name}</b>{settings.wifi_password && <> · clave <code>{settings.wifi_password}</code></>}</p></div>)}
       <h3 className="mt">Departamentos</h3>
       <div className="grid g2 mt2">
         {Object.entries(DEPTS).map(([id, d]) => (
@@ -615,22 +639,87 @@ function Inbox({ me }) {
   );
 }
 
+const appUrl = () => window.location.origin + import.meta.env.BASE_URL;
+
+function WelcomeCard({ info, settings, onClose }) {
+  const hotel = settings.hotel_name || "Hotel Concierge";
+  const [email, setEmail] = useState(info.email || "");
+  const lines = [
+    `Estimado/a ${info.full_name}:`, "",
+    `Bienvenido/a a ${hotel}. Estos son sus datos de acceso:`, "",
+    `Habitación: ${info.room}`,
+    info.check_out ? `Salida prevista: ${fmtDate(info.check_out)}` : null, "",
+    "APLICACIÓN DEL HOTEL", `Dirección: ${appUrl()}`, `Usuario: ${info.username}`, `Contraseña: ${info.password}`, "",
+    ...(settings.wifi_name ? ["WI-FI DEL HOTEL", `Red: ${settings.wifi_name}`, settings.wifi_password ? `Clave: ${settings.wifi_password}` : null, ""] : []),
+    settings.welcome_note || null, settings.welcome_note ? "" : null,
+    "Sus credenciales dejarán de ser válidas al realizar el check-out.", "", hotel,
+  ].filter((l) => l !== null);
+  const subject = `Bienvenido a ${hotel} · Sus datos de acceso`;
+  const enc = encodeURIComponent;
+  const mailto = `mailto:${enc(email)}?subject=${enc(subject)}&body=${enc(lines.join("\n"))}`;
+  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(email)}&su=${enc(subject)}&body=${enc(lines.join("\n"))}`;
+
+  return (
+    <div className="mt">
+      <p className="kicker noprint">{info.reset ? "Nueva contraseña" : "Huésped registrado"} · la contraseña solo se muestra ahora</p>
+      <div className="pc print-card mt2">
+        <p className="pc-k">Tarjeta de bienvenida</p>
+        <h3 className="pc-h">{hotel}</h3><div className="pc-rule" />
+        <p className="pc-name">{info.full_name}</p>
+        <p className="pc-s">Habitación {info.room}{info.check_out ? ` · Salida ${fmtDate(info.check_out)}` : ""}</p>
+        <div className="pc-grid">
+          <div className="pc-box"><p className="pc-k">Aplicación del hotel</p>
+            <p className="pc-s">Dirección</p><p className="pc-v">{appUrl()}</p>
+            <p className="pc-s">Usuario</p><p className="pc-v">{info.username}</p>
+            <p className="pc-s">Contraseña</p><p className="pc-v">{info.password}</p></div>
+          {settings.wifi_name && (
+            <div className="pc-box"><p className="pc-k">Wi‑Fi del hotel</p>
+              <p className="pc-s">Red</p><p className="pc-v">{settings.wifi_name}</p>
+              {settings.wifi_password && (<><p className="pc-s">Clave</p><p className="pc-v">{settings.wifi_password}</p></>)}</div>)}
+        </div>
+        {settings.welcome_note && <p className="pc-s" style={{ marginTop: 14 }}>{settings.welcome_note}</p>}
+        <p className="pc-foot">Sus credenciales dejarán de ser válidas al realizar el check-out.</p>
+      </div>
+      <div className="card mt2 grid noprint">
+        <div className="form">
+          <Field label="Correo del huésped"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="huesped@correo.com" /></Field>
+          <div className="row">
+            <button className="btn gold" disabled={!email} onClick={() => { window.location.href = mailto; }}>Enviar por correo</button>
+            <button className="btn ghost" disabled={!email} onClick={() => window.open(gmail, "_blank", "noopener")}>Abrir en Gmail</button>
+          </div>
+        </div>
+        <div className="row">
+          <button className="btn" onClick={() => window.print()}>Imprimir tarjeta</button>
+          <button className="btn ghost" onClick={onClose}>Cerrar</button>
+        </div>
+        {!settings.wifi_name && <p className="muted sm">Para incluir el Wi‑Fi, configúrelo en la pestaña Ajustes.</p>}
+        <p className="muted sm">«Enviar por correo» abre su programa de correo con el mensaje listo; usted solo pulsa enviar.</p>
+      </div>
+    </div>
+  );
+}
+
 function Guests() {
   const notify = useNotify();
-  const blank = { username: "", password: genPass(), full_name: "", room: "", check_out: "" };
+  const blank = { username: "", password: genPass(), full_name: "", room: "", email: "", check_out: "" };
   const [f, setF] = useState(blank);
   const [created, setCreated] = useState(null);
   const [busy, setBusy] = useState(false);
+  const { settings } = useSettings();
   const { data: guests, reload } = useData(() => q(supabase.from("profiles").select("*").eq("role", "guest").order("room")), [], ["profiles"]);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value, ...(k === "room" && !s.username ? { username: e.target.value ? `hab${e.target.value}` : "" } : {}) }));
 
   async function create(e) {
     e.preventDefault(); setBusy(true);
-    const { error } = await supabase.rpc("create_guest", {
+    const { data: id, error } = await supabase.rpc("create_guest", {
       p_username: f.username, p_password: f.password, p_full_name: f.full_name, p_room: f.room, p_check_in: ymd(new Date()), p_check_out: f.check_out || null });
     setBusy(false);
     if (error) return notify(friendly(error), true);
-    setCreated({ ...f }); setF({ ...blank, password: genPass() }); reload();
+    if (f.email.trim()) {
+      const r = await supabase.from("profiles").update({ email: f.email.trim() }).eq("id", id);
+      if (r.error) notify("Huésped registrado, pero no se guardó el correo (falta ejecutar la migración SQL).", true);
+    }
+    setCreated({ ...f, email: f.email.trim() }); setF({ ...blank, password: genPass() }); reload();
   }
   async function checkout(g) {
     if (!window.confirm(`¿Realizar el checkout de ${g.full_name}?\nSu acceso se eliminará de inmediato junto con su actividad.`)) return;
@@ -641,7 +730,7 @@ function Guests() {
     const p = genPass();
     if (!window.confirm(`Se asignará una nueva contraseña a ${g.full_name}. ¿Continuar?`)) return;
     const { error } = await supabase.rpc("reset_guest_password", { p_guest: g.id, p_password: p });
-    if (error) notify(friendly(error), true); else setCreated({ username: g.username, password: p, full_name: g.full_name, room: g.room, reset: true });
+    if (error) notify(friendly(error), true); else setCreated({ username: g.username, password: p, full_name: g.full_name, room: g.room, email: g.email || "", check_out: g.check_out, reset: true });
   }
 
   return (
@@ -652,19 +741,14 @@ function Guests() {
         <div className="form">
           <Field label="Nombre completo"><input value={f.full_name} onChange={set("full_name")} required /></Field>
           <Field label="Habitación"><input value={f.room} onChange={set("room")} required /></Field>
+          <Field label="Correo del huésped (opcional)"><input type="email" value={f.email} onChange={set("email")} /></Field>
           <Field label="Usuario"><input value={f.username} onChange={set("username")} autoCapitalize="none" required /></Field>
           <Field label="Contraseña"><input value={f.password} onChange={set("password")} minLength={6} required /></Field>
           <Field label="Fecha de salida"><input type="date" value={f.check_out} onChange={set("check_out")} min={ymd(new Date())} /></Field>
           <button className="btn gold" disabled={busy}>{busy ? "Registrando…" : "Registrar"}</button>
         </div>
       </form>
-      {created && (
-        <div className="cred mt">
-          <p className="kicker">{created.reset ? "Nueva contraseña" : "Huésped registrado"} · entregar al huésped (se muestra una sola vez)</p>
-          <p className="mt2">{created.full_name} · Hab. {created.room}</p>
-          <p className="mt2">Usuario: <code>{created.username}</code></p><p>Contraseña: <code>{created.password}</code></p>
-          <button className="btn ghost sm mt2" onClick={() => setCreated(null)}>Cerrar</button>
-        </div>)}
+      {created && <WelcomeCard key={created.username + created.password} info={created} settings={settings} onClose={() => setCreated(null)} />}
       <div className="card mt scroll">
         <table><thead><tr><th>Huésped</th><th>Hab.</th><th>Usuario</th><th>Salida</th><th /></tr></thead>
           <tbody>{guests?.map((g) => (
@@ -774,6 +858,39 @@ function MenuAdmin({ me }) {
   );
 }
 
+function HotelSettings() {
+  const notify = useNotify();
+  const { settings, reload } = useSettings();
+  const [f, setF] = useState(null);
+  useEffect(() => {
+    setF({ hotel_name: settings.hotel_name || "Hotel Concierge", wifi_name: settings.wifi_name || "", wifi_password: settings.wifi_password || "", welcome_note: settings.welcome_note || "" });
+  }, [settings.hotel_name, settings.wifi_name, settings.wifi_password, settings.welcome_note]);
+  if (!f) return null;
+  const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+  async function save(e) {
+    e.preventDefault();
+    const { error } = await supabase.from("hotel_settings").upsert({ id: 1, ...f, updated_at: new Date().toISOString() });
+    if (error) notify(["42P01", "PGRST205"].includes(error.code) ? "Falta ejecutar la migración SQL (Wi‑Fi y correo) en Supabase." : friendly(error), true);
+    else { notify("Ajustes guardados."); reload(); }
+  }
+  return (
+    <div>
+      <p className="kicker">Recepción</p><h2>Ajustes del hotel</h2>
+      <form className="card mt grid" onSubmit={save}>
+        <h3>Datos para la tarjeta de bienvenida</h3>
+        <div className="form">
+          <Field label="Nombre del hotel"><input value={f.hotel_name} onChange={set("hotel_name")} required /></Field>
+          <Field label="Red Wi‑Fi"><input value={f.wifi_name} onChange={set("wifi_name")} /></Field>
+          <Field label="Clave del Wi‑Fi"><input value={f.wifi_password} onChange={set("wifi_password")} /></Field>
+          <Field label="Mensaje de bienvenida (opcional)"><input value={f.welcome_note} onChange={set("welcome_note")} /></Field>
+          <button className="btn gold">Guardar</button>
+        </div>
+        <p className="muted sm">El Wi‑Fi se imprime en la tarjeta, se incluye en el correo y se muestra en el inicio de cada huésped.</p>
+      </form>
+    </div>
+  );
+}
+
 function StaffAdmin() {
   const notify = useNotify();
   const blank = { username: "", password: genPass(), full_name: "", role: "restaurant" };
@@ -814,7 +931,7 @@ function StaffApp({ me }) {
   const isRec = me.role === "reception";
   const items = isRec
     ? [{ id: "inbox", label: "Bandeja", icon: "inbox" }, { id: "guests", label: "Huéspedes", icon: "users" }, { id: "res", label: "Reservas", icon: "calendar" },
-       { id: "spaces", label: "Espacios", icon: "grid" }, { id: "menu", label: "Carta", icon: "utensils" }, { id: "staff", label: "Personal", icon: "user" }]
+       { id: "spaces", label: "Espacios", icon: "grid" }, { id: "menu", label: "Carta", icon: "utensils" }, { id: "staff", label: "Ajustes", icon: "user" }]
     : [{ id: "inbox", label: "Bandeja", icon: "inbox" }, { id: "menu", label: "Carta", icon: "utensils" }];
   const [tab, setTab] = useState("inbox");
   return (
@@ -826,7 +943,7 @@ function StaffApp({ me }) {
         {tab === "res" && <StaffReservations />}
         {tab === "spaces" && <Spaces />}
         {tab === "menu" && <MenuAdmin me={me} />}
-        {tab === "staff" && <StaffAdmin />}
+        {tab === "staff" && <><HotelSettings /><div className="mt"><StaffAdmin /></div></>}
       </main>
     </>
   );

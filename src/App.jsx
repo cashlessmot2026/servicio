@@ -155,6 +155,13 @@ table{width:100%;border-collapse:collapse;font-size:.9rem}th{text-align:left;fon
 .pc-v{font-size:1.05rem;font-weight:600;letter-spacing:.03em;word-break:break-all}
 .pc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px}
 .pc-box{border:1px solid #e4dccd;border-radius:10px;padding:14px 16px;background:#faf7f2}
+.pc.wide{max-width:780px}
+.pc-table{width:100%;border-collapse:collapse;margin-top:6px;font-size:.84rem;color:#14243b}
+.pc-table th{color:#6b7788;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;text-align:left;padding:6px 4px;border-bottom:1px solid #e4dccd}
+.pc-table td{padding:7px 4px;border-top:0;border-bottom:1px solid #efe9dc;vertical-align:top;color:#14243b}
+.pc-table .r{text-align:right;white-space:nowrap}
+.pc-sum{display:flex;justify-content:space-between;font-size:.92rem;padding:3px 0;color:#14243b}
+.pc-total{display:flex;justify-content:space-between;align-items:baseline;border-top:2px solid #14243b;margin-top:12px;padding-top:12px;font-weight:700;font-size:1.3rem;color:#14243b}
 .pc-foot{margin-top:20px;font-size:.78rem;color:#6b7788;border-top:1px solid #e4dccd;padding-top:12px}
 @media print{@page{margin:18mm}body *{visibility:hidden!important}.print-card,.print-card *{visibility:visible!important}
 .print-card{position:absolute;left:0;top:0;width:100%;max-width:none;border:0;box-shadow:none}.noprint{display:none!important}}
@@ -699,12 +706,141 @@ function WelcomeCard({ info, settings, onClose }) {
   );
 }
 
+function Settlement({ guest: g, settings, onClose, onDone }) {
+  const notify = useNotify();
+  const hotel = settings.hotel_name || "Hotel Concierge";
+  const ords = useData(() => q(supabase.from("orders").select("*, order_items(*)").eq("guest_id", g.id).neq("status", "cancelado").order("created_at")), [g.id]);
+  const reqs = useData(() => q(supabase.from("requests").select("*").eq("guest_id", g.id).neq("status", "cancelado").order("created_at")), [g.id]);
+  const ress = useData(() => q(supabase.from("reservations").select("*, spaces(name)").eq("guest_id", g.id).eq("status", "confirmada").order("created_at")), [g.id]);
+  const issued = useMemo(() => new Date(), []);
+  const inDate = g.check_in || ymd(g.created_at);
+  const [nights, setNights] = useState(() => {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    return String(Math.max(1, Math.round((t - new Date(inDate + "T00:00:00")) / 864e5)));
+  });
+  const [rate, setRate] = useState(g.rate_per_night != null ? String(g.rate_per_night) : "");
+  const [email, setEmail] = useState(g.email || "");
+  const [busy, setBusy] = useState(false);
+
+  const orders = ords.data || [], requests = reqs.data || [], reservations = ress.data || [];
+  const lodging = (Number(nights) || 0) * (Number(rate) || 0);
+  const consumption = orders.reduce((a, o) => a + Number(o.total), 0);
+  const subtotal = lodging + consumption;
+  const taxPct = Number(settings.tax_percent) || 0;
+  const tax = Math.round(subtotal * taxPct) / 100;
+  const total = subtotal + tax;
+  const dep = (d) => DEPTS[d]?.name || d;
+  const resText = (r) => { const [a, b] = parseRange(r.during); return `${r.spaces?.name} · ${fmtDT(a)} – ${fmtHour(b)}`; };
+
+  function textLines(compact) {
+    const L = [
+      `Estimado/a ${g.full_name}:`, "", `Gracias por su estadía en ${hotel}. Este es el detalle de su cuenta:`, "",
+      "ESTADÍA", `Habitación: ${g.room}`, `Estadía registrada el: ${fmtDT(g.created_at)}`, `Ingreso: ${fmtDate(inDate)}`, `Liquidación emitida: ${fmtDT(issued)}`, "",
+      "ALOJAMIENTO", `${nights} noche(s) × ${money(Number(rate) || 0)} = ${money(lodging)}`, "",
+    ];
+    if (orders.length) {
+      L.push("CONSUMOS");
+      orders.forEach((o) => L.push(compact
+        ? `${fmtDT(o.created_at)} · ${dep(o.department)} · ${money(o.total)}`
+        : `${fmtDT(o.created_at)} · ${dep(o.department)}: ${o.order_items.map((i) => `${i.qty}× ${i.name}`).join(", ")} · ${money(o.total)}`));
+      L.push("");
+    }
+    if (!compact && reservations.length) { L.push("RESERVAS DE ESPACIOS"); reservations.forEach((r) => L.push(resText(r))); L.push(""); }
+    if (!compact && requests.length) { L.push("SOLICITUDES"); requests.forEach((r) => L.push(`${fmtDT(r.created_at)} · ${dep(r.department)} · ${r.title}`)); L.push(""); }
+    L.push(`Subtotal: ${money(subtotal)}`);
+    if (taxPct) L.push(`Impuesto (${taxPct}%): ${money(tax)}`);
+    L.push(`TOTAL A PAGAR: ${money(total)}`, "", `Esperamos verle pronto.`, hotel);
+    return L;
+  }
+  const subject = `${hotel} · Liquidación de su estadía (Hab. ${g.room})`;
+  const enc = encodeURIComponent;
+  let body = textLines(false).join("\n");
+  let tooLong = false;
+  if (enc(body).length > 1700) { body = textLines(true).join("\n") + "\n\n(El detalle completo está en la liquidación impresa.)"; tooLong = true; }
+  const mailto = `mailto:${enc(email)}?subject=${enc(subject)}&body=${enc(body)}`;
+  const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${enc(email)}&su=${enc(subject)}&body=${enc(body)}`;
+
+  async function finish() {
+    if (!window.confirm(`Se eliminará el acceso de ${g.full_name} y toda su actividad.\n¿Ya imprimió o envió la liquidación?`)) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("checkout_guest", { p_guest: g.id });
+    setBusy(false);
+    if (error) return notify(friendly(error), true);
+    notify("Checkout realizado. Acceso eliminado."); onDone();
+  }
+
+  return (
+    <div>
+      <button className="btn ghost sm noprint" onClick={onClose}>← Huéspedes</button>
+      <p className="kicker mt2 noprint">Liquidación de habitación</p>
+      <div className="card mt2 noprint">
+        <div className="form">
+          <Field label="Noches"><input type="number" min="0" value={nights} onChange={(e) => setNights(e.target.value)} /></Field>
+          <Field label="Tarifa por noche"><input type="number" min="0" step="0.01" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="0.00" /></Field>
+        </div>
+        {!rate && <p className="muted sm mt2">Indique la tarifa por noche para incluir el alojamiento en el total.</p>}
+      </div>
+
+      <div className="pc wide print-card mt2">
+        <p className="pc-k">Liquidación de estadía</p>
+        <h3 className="pc-h">{hotel}</h3><div className="pc-rule" />
+        <p className="pc-name">{g.full_name}</p>
+        <p className="pc-s">Habitación {g.room}</p>
+        <div className="pc-grid">
+          <div className="pc-box"><p className="pc-k">Solicitud de estadía</p><p className="pc-v">{fmtDT(g.created_at)}</p>
+            <p className="pc-s">Ingreso</p><p className="pc-v">{fmtDate(inDate)}</p></div>
+          <div className="pc-box"><p className="pc-k">Liquidación</p><p className="pc-v">{fmtDT(issued)}</p>
+            <p className="pc-s">Noches</p><p className="pc-v">{Number(nights) || 0}</p></div>
+        </div>
+
+        <p className="pc-k" style={{ marginTop: 20 }}>Alojamiento</p>
+        <div className="pc-sum"><span>{Number(nights) || 0} noche(s) × {money(Number(rate) || 0)}</span><b>{money(lodging)}</b></div>
+
+        <p className="pc-k" style={{ marginTop: 18 }}>Consumos</p>
+        {ords.loading ? <p className="pc-s">Cargando…</p> : !orders.length ? <p className="pc-s">Sin consumos registrados.</p> : (
+          <table className="pc-table"><thead><tr><th>Fecha y hora</th><th>Detalle</th><th className="r">Importe</th></tr></thead>
+            <tbody>{orders.map((o) => (
+              <tr key={o.id}><td>{fmtDT(o.created_at)}</td><td><b>{dep(o.department)}</b><br />{o.order_items.map((i) => `${i.qty}× ${i.name}`).join(", ")}</td><td className="r">{money(o.total)}</td></tr>))}</tbody></table>)}
+
+        {reservations.length > 0 && (<><p className="pc-k" style={{ marginTop: 18 }}>Reservas de espacios</p>
+          <table className="pc-table"><tbody>{reservations.map((r) => (<tr key={r.id}><td>{resText(r)}</td><td className="r">Registrada {fmtDT(r.created_at)}</td></tr>))}</tbody></table></>)}
+        {requests.length > 0 && (<><p className="pc-k" style={{ marginTop: 18 }}>Solicitudes</p>
+          <table className="pc-table"><tbody>{requests.map((r) => (<tr key={r.id}><td>{fmtDT(r.created_at)}</td><td>{dep(r.department)} · {r.title}</td><td className="r">{STATUS[r.status]}</td></tr>))}</tbody></table></>)}
+
+        <div style={{ marginTop: 18 }}>
+          <div className="pc-sum"><span>Alojamiento</span><span>{money(lodging)}</span></div>
+          <div className="pc-sum"><span>Consumos</span><span>{money(consumption)}</span></div>
+          {taxPct > 0 && (<div className="pc-sum"><span>Impuesto ({taxPct}%)</span><span>{money(tax)}</span></div>)}
+          <div className="pc-total"><span>TOTAL A PAGAR</span><span>{money(total)}</span></div>
+        </div>
+        <p className="pc-foot">Gracias por elegirnos.</p>
+      </div>
+
+      <div className="card mt2 grid noprint">
+        <div className="form">
+          <Field label="Correo del huésped"><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="huesped@correo.com" /></Field>
+          <div className="row">
+            <button className="btn gold" disabled={!email} onClick={() => { window.location.href = mailto; }}>Enviar por correo</button>
+            <button className="btn ghost" disabled={!email} onClick={() => window.open(gmail, "_blank", "noopener")}>Abrir en Gmail</button>
+          </div>
+        </div>
+        <div className="row"><button className="btn" onClick={() => window.print()}>Imprimir liquidación</button></div>
+        {tooLong && <p className="muted sm">El correo incluye una versión resumida porque el detalle es extenso; la impresión lleva todo.</p>}
+        <hr style={{ border: 0, borderTop: "1px solid var(--line)", width: "100%" }} />
+        <p className="muted sm">Cuando el huésped haya pagado y tenga su liquidación, finalice la estadía. Esto elimina su acceso y su actividad.</p>
+        <div className="row"><button className="btn danger" disabled={busy} onClick={finish}>{busy ? "Procesando…" : "Confirmar checkout y eliminar acceso"}</button></div>
+      </div>
+    </div>
+  );
+}
+
 function Guests() {
   const notify = useNotify();
-  const blank = { username: "", password: genPass(), full_name: "", room: "", email: "", check_out: "" };
+  const blank = { username: "", password: genPass(), full_name: "", room: "", email: "", rate: "", check_out: "" };
   const [f, setF] = useState(blank);
   const [created, setCreated] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [settling, setSettling] = useState(null);
   const { settings } = useSettings();
   const { data: guests, reload } = useData(() => q(supabase.from("profiles").select("*").eq("role", "guest").order("room")), [], ["profiles"]);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value, ...(k === "room" && !s.username ? { username: e.target.value ? `hab${e.target.value}` : "" } : {}) }));
@@ -715,16 +851,14 @@ function Guests() {
       p_username: f.username, p_password: f.password, p_full_name: f.full_name, p_room: f.room, p_check_in: ymd(new Date()), p_check_out: f.check_out || null });
     setBusy(false);
     if (error) return notify(friendly(error), true);
-    if (f.email.trim()) {
-      const r = await supabase.from("profiles").update({ email: f.email.trim() }).eq("id", id);
-      if (r.error) notify("Huésped registrado, pero no se guardó el correo (falta ejecutar la migración SQL).", true);
+    const extra = {};
+    if (f.email.trim()) extra.email = f.email.trim();
+    if (f.rate) extra.rate_per_night = Number(f.rate);
+    if (Object.keys(extra).length) {
+      const r = await supabase.from("profiles").update(extra).eq("id", id);
+      if (r.error) notify("Huésped registrado, pero no se guardaron el correo o la tarifa (falta ejecutar la migración SQL).", true);
     }
     setCreated({ ...f, email: f.email.trim() }); setF({ ...blank, password: genPass() }); reload();
-  }
-  async function checkout(g) {
-    if (!window.confirm(`¿Realizar el checkout de ${g.full_name}?\nSu acceso se eliminará de inmediato junto con su actividad.`)) return;
-    const { error } = await supabase.rpc("checkout_guest", { p_guest: g.id });
-    if (error) notify(friendly(error), true); else { notify("Checkout realizado. Acceso eliminado."); reload(); }
   }
   async function reset(g) {
     const p = genPass();
@@ -732,6 +866,8 @@ function Guests() {
     const { error } = await supabase.rpc("reset_guest_password", { p_guest: g.id, p_password: p });
     if (error) notify(friendly(error), true); else setCreated({ username: g.username, password: p, full_name: g.full_name, room: g.room, email: g.email || "", check_out: g.check_out, reset: true });
   }
+
+  if (settling) return <Settlement guest={settling} settings={settings} onClose={() => setSettling(null)} onDone={() => { setSettling(null); reload(); }} />;
 
   return (
     <div>
@@ -742,6 +878,7 @@ function Guests() {
           <Field label="Nombre completo"><input value={f.full_name} onChange={set("full_name")} required /></Field>
           <Field label="Habitación"><input value={f.room} onChange={set("room")} required /></Field>
           <Field label="Correo del huésped (opcional)"><input type="email" value={f.email} onChange={set("email")} /></Field>
+          <Field label="Tarifa por noche (opcional)"><input type="number" min="0" step="0.01" value={f.rate} onChange={set("rate")} /></Field>
           <Field label="Usuario"><input value={f.username} onChange={set("username")} autoCapitalize="none" required /></Field>
           <Field label="Contraseña"><input value={f.password} onChange={set("password")} minLength={6} required /></Field>
           <Field label="Fecha de salida"><input type="date" value={f.check_out} onChange={set("check_out")} min={ymd(new Date())} /></Field>
@@ -753,7 +890,7 @@ function Guests() {
         <table><thead><tr><th>Huésped</th><th>Hab.</th><th>Usuario</th><th>Salida</th><th /></tr></thead>
           <tbody>{guests?.map((g) => (
             <tr key={g.id}><td>{g.full_name}</td><td>{g.room}</td><td>{g.username}</td><td>{g.check_out ? fmtDate(g.check_out) : "—"}</td>
-              <td><div className="row"><button className="btn sm ghost" onClick={() => reset(g)}>Nueva clave</button><button className="btn sm danger" onClick={() => checkout(g)}>Checkout</button></div></td></tr>))}</tbody></table>
+              <td><div className="row"><button className="btn sm ghost" onClick={() => reset(g)}>Nueva clave</button><button className="btn sm danger" onClick={() => setSettling(g)}>Liquidar</button></div></td></tr>))}</tbody></table>
         {guests && !guests.length && <Empty>No hay huéspedes registrados.</Empty>}
       </div>
     </div>
@@ -863,14 +1000,14 @@ function HotelSettings() {
   const { settings, reload } = useSettings();
   const [f, setF] = useState(null);
   useEffect(() => {
-    setF({ hotel_name: settings.hotel_name || "Hotel Concierge", wifi_name: settings.wifi_name || "", wifi_password: settings.wifi_password || "", welcome_note: settings.welcome_note || "" });
-  }, [settings.hotel_name, settings.wifi_name, settings.wifi_password, settings.welcome_note]);
+    setF({ hotel_name: settings.hotel_name || "Hotel Concierge", wifi_name: settings.wifi_name || "", wifi_password: settings.wifi_password || "", welcome_note: settings.welcome_note || "", tax_percent: String(settings.tax_percent ?? 0) });
+  }, [settings.hotel_name, settings.wifi_name, settings.wifi_password, settings.welcome_note, settings.tax_percent]);
   if (!f) return null;
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
   async function save(e) {
     e.preventDefault();
-    const { error } = await supabase.from("hotel_settings").upsert({ id: 1, ...f, updated_at: new Date().toISOString() });
-    if (error) notify(["42P01", "PGRST205"].includes(error.code) ? "Falta ejecutar la migración SQL (Wi‑Fi y correo) en Supabase." : friendly(error), true);
+    const { error } = await supabase.from("hotel_settings").upsert({ id: 1, ...f, tax_percent: Number(f.tax_percent) || 0, updated_at: new Date().toISOString() });
+    if (error) notify(["42P01", "42703", "PGRST204", "PGRST205"].includes(error.code) ? "Falta ejecutar la migración SQL (Wi‑Fi y correo) en Supabase." : friendly(error), true);
     else { notify("Ajustes guardados."); reload(); }
   }
   return (
@@ -883,6 +1020,7 @@ function HotelSettings() {
           <Field label="Red Wi‑Fi"><input value={f.wifi_name} onChange={set("wifi_name")} /></Field>
           <Field label="Clave del Wi‑Fi"><input value={f.wifi_password} onChange={set("wifi_password")} /></Field>
           <Field label="Mensaje de bienvenida (opcional)"><input value={f.welcome_note} onChange={set("welcome_note")} /></Field>
+          <Field label="Impuesto en la liquidación (%)"><input type="number" min="0" step="0.01" value={f.tax_percent} onChange={set("tax_percent")} /></Field>
           <button className="btn gold">Guardar</button>
         </div>
         <p className="muted sm">El Wi‑Fi se imprime en la tarjeta, se incluye en el correo y se muestra en el inicio de cada huésped.</p>
